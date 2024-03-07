@@ -27,7 +27,7 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0., linearize_out=True):
         super().__init__()
         inner_dim = dim_head *  heads
         project_out = not (heads == 1 and dim_head == dim)
@@ -42,8 +42,9 @@ class Attention(nn.Module):
 
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
 
+        self.linearize_out = linearize_out
         self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim),
+            nn.Linear(inner_dim, out_features=dim),
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
 
@@ -60,28 +61,45 @@ class Attention(nn.Module):
 
         out = torch.matmul(attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
+        if self.linearize_out == True:
+            out = self.to_out(out)
+            
+        return out
 
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
         super().__init__()
         self.norm = nn.LayerNorm(dim)
+        self.norm_last = nn.LayerNorm(heads*dim_head)
         self.layers = nn.ModuleList([])
-        for _ in range(depth):
-            self.layers.append(nn.ModuleList([
-                Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
-                FeedForward(dim, mlp_dim, dropout = dropout)
-            ]))
+        
+        for i in range(depth):
+            if i < depth - 1:
+                self.layers.append(nn.ModuleList([
+                    Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
+                    FeedForward(dim, mlp_dim, dropout = dropout)
+                ]))
+            elif i == depth - 1:
+                self.layers.append(nn.ModuleList([
+                    Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout, linearize_out=False),
+                    FeedForward(heads*dim_head, mlp_dim, dropout = dropout)
+                ]))
 
     def forward(self, x):
-        for attn, ff in self.layers:
-            x = attn(x) + x
-            x = ff(x) + x
+        for i, (attn, ff) in enumerate(self.layers):
+            if i < len(self.layers) - 1:
+                x = attn(x) + x
+                x = ff(x) + x
+                x = self.norm(x)
+            elif i == len(self.layers) - 1:
+                x = attn(x)
+                x = ff(x)
+                x = self.norm_last(x)
 
-        return self.norm(x)
+        return x
 
 class ViT(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'none', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'none', channels = 3, dim_head = 768, dropout = 0., emb_dropout = 0.):
         super().__init__()
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
@@ -108,7 +126,6 @@ class ViT(nn.Module):
         self.pool = pool
         self.to_latent = nn.Identity()
         
-        self.features_reshape = Rearrange('b p (p1 p2) -> b p p1 p2', p1 = patch_height, p2 = patch_width)
         self.mlp_head = nn.Linear(dim, num_classes)
 
     def forward(self, img):
@@ -121,22 +138,20 @@ class ViT(nn.Module):
         x = self.dropout(x)
 
         x = self.transformer(x)
-        # x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
         x = x[: 0] if self.pool == 'cls' else x[:, 1:]
         x = self.to_latent(x)
-        x = self.features_reshape(x)  # return features in the shape [batch, patch, sqrt(dim), sqrt(dim)]
         return x
      
      
 if __name__ == '__main__':
-   img = torch.randn(2, 3, 512, 512)
+   img = torch.randn(2, 3, 512, 512) # FIXME right now, the image has to be a square
    vit = ViT(
       image_size = 512,
       patch_size = 32,
       num_classes = 1000,
       dim = 1024,
       depth = 6,
-      heads = 16,
+      heads = 12,
       mlp_dim = 2048,
       dropout = 0.1,
       emb_dropout = 0.1,
