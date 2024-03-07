@@ -97,8 +97,30 @@ class Transformer(nn.Module):
                 x = self.norm_last(x)
 
         return x
+    
+class ResidualBlock(nn.Module):
+    def __init__( self, in_channels: int, out_channels: int):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride= 1,
+                     padding=1, groups=1, bias=False, dilation=1)
+        self.norm1 = nn.BatchNorm2d(out_channels)
+        self.gelu1 = nn.GELU()
+        self.conv2 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride= 1,
+                     padding=1, groups=1, bias=False, dilation=1)
+        self.norm2 = nn.BatchNorm2d(out_channels)
+        self.gelu2 = nn.GELU()
 
-class ViT(nn.Module):
+    def forward(self, x):
+        y = self.conv1(x)
+        y = self.norm1(y)
+        y = self.gelu1(y)
+        y = self.conv2(y)
+        y = self.norm2(y)
+        y = y + x
+        y = self.gelu2(y)
+        return y
+
+class ViTFeatureExtractor(nn.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'none', channels = 3, dim_head = 768, dropout = 0., emb_dropout = 0.):
         super().__init__()
         image_height, image_width = pair(image_size)
@@ -126,7 +148,9 @@ class ViT(nn.Module):
         self.pool = pool
         self.to_latent = nn.Identity()
         
-        self.mlp_head = nn.Linear(dim, num_classes)
+        self.reshape_feature = Rearrange('b (p1 p2) d -> b d p1 p2', p1=image_height // patch_height, p2 = image_width // patch_width)
+        self.conv = nn.Conv2d(heads*dim_head, 512, 1)
+        self.residual_block = ResidualBlock(in_channels=512, out_channels=512)
 
     def forward(self, img):
         x = self.to_patch_embedding(img)
@@ -140,12 +164,15 @@ class ViT(nn.Module):
         x = self.transformer(x)
         x = x[: 0] if self.pool == 'cls' else x[:, 1:]
         x = self.to_latent(x)
+        x = self.reshape_feature(x)
+        x = self.conv(x)
+        x = self.residual_block(x)
         return x
      
      
 if __name__ == '__main__':
-   img = torch.randn(2, 3, 512, 512) # FIXME right now, the image has to be a square
-   vit = ViT(
+   img = torch.randn(2, 3, 512, 512) # FIXME: right now, the image has to be a square
+   vit = ViTFeatureExtractor(
       image_size = 512,
       patch_size = 32,
       num_classes = 1000,
