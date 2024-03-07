@@ -1,16 +1,14 @@
 import torch
-import torch.nn as nn
 import torchvision
-from vit import ViT
+from vit import ViTFeatureExtractor
 from torchvision.models.detection import FasterRCNN
 from torchvision.models.detection.rpn import AnchorGenerator
 
 
-def create_model(num_classes):
-   backbone = ViT(
-      image_size = 512,
-      patch_size = 32,
-      num_classes = 1000,
+def create_model(num_classes, image_size=800, path_size=32):
+   backbone = ViTFeatureExtractor(
+      image_size = 800,
+      patch_size = path_size,
       dim = 1024,
       depth = 6,
       heads = 16,
@@ -18,7 +16,7 @@ def create_model(num_classes):
       dropout = 0.1,
       emb_dropout = 0.1,
    )
-   backbone.out_channels = 256
+   backbone.out_channels = 512
    anchor_generator = AnchorGenerator(
       sizes=((16, 32, 64),),
       aspect_ratios=((0.5, 1.0, 2.0),)
@@ -35,9 +33,7 @@ def create_model(num_classes):
       num_classes=num_classes,
       rpn_anchor_generator=anchor_generator,
       box_roi_pool=roi_pooler,
-      min_size=512
    )
-   # print(model)
    return model
    
 if __name__ == '__main__':

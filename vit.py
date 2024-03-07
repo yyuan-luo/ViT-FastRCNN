@@ -121,7 +121,7 @@ class ResidualBlock(nn.Module):
         return y
 
 class ViTFeatureExtractor(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'none', channels = 3, dim_head = 768, dropout = 0., emb_dropout = 0.):
+    def __init__(self, *, image_size, patch_size, dim, depth, heads, mlp_dim, channels = 3, dim_head = 768, dropout = 0., emb_dropout = 0.):
         super().__init__()
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
@@ -130,7 +130,6 @@ class ViTFeatureExtractor(nn.Module):
 
         num_patches = (image_height // patch_height) * (image_width // patch_width)
         patch_dim = channels * patch_height * patch_width
-        assert pool in {'cls', 'none'}, 'pool type must be either cls (cls token) or none'
 
         self.to_patch_embedding = nn.Sequential(
             Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
@@ -145,7 +144,6 @@ class ViTFeatureExtractor(nn.Module):
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
 
-        self.pool = pool
         self.to_latent = nn.Identity()
         
         self.reshape_feature = Rearrange('b (p1 p2) d -> b d p1 p2', p1=image_height // patch_height, p2 = image_width // patch_width)
@@ -161,8 +159,7 @@ class ViTFeatureExtractor(nn.Module):
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        x = self.transformer(x)
-        x = x[: 0] if self.pool == 'cls' else x[:, 1:]
+        x = self.transformer(x)[:, 1:]
         x = self.to_latent(x)
         x = self.reshape_feature(x)
         x = self.conv(x)
@@ -171,18 +168,16 @@ class ViTFeatureExtractor(nn.Module):
      
      
 if __name__ == '__main__':
-   img = torch.randn(2, 3, 512, 512) # FIXME: right now, the image has to be a square
+   img = torch.randn(2, 3, 512, 512) # TODO: accept only squre image right now, maybe try to make it more flexible
    vit = ViTFeatureExtractor(
       image_size = 512,
       patch_size = 32,
-      num_classes = 1000,
       dim = 1024,
-      depth = 6,
+      depth = 1,
       heads = 12,
       mlp_dim = 2048,
       dropout = 0.1,
       emb_dropout = 0.1,
-      pool='none'
    )
    with torch.no_grad():
       print(vit(img).shape)
